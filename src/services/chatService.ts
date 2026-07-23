@@ -12,68 +12,101 @@ const api = axios.create({
   },
 });
 
+// Helper function to parse FastAPI response payload into standardized AiQueryResponse
+function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
+  let dataRows: Record<string, any>[] | undefined = undefined;
+  let rowCount = 0;
+
+  if (raw.queryResult) {
+    if (Array.isArray(raw.queryResult.columns) && Array.isArray(raw.queryResult.rows)) {
+      const colNames = raw.queryResult.columns.map((c: any) =>
+        typeof c === 'object' && c !== null ? c.name : String(c)
+      );
+      dataRows = raw.queryResult.rows.map((r: any) => {
+        const rowObj: Record<string, any> = {};
+        const vals = Array.isArray(r.values)
+          ? r.values.map((v: any) => (v && typeof v === 'object' && 'value' in v ? v.value : v))
+          : [];
+        colNames.forEach((col: string, idx: number) => {
+          rowObj[col] = vals[idx] !== undefined ? vals[idx] : null;
+        });
+        return rowObj;
+      });
+      rowCount = parseInt(raw.queryResult.totalRowCount, 10) || (dataRows ? dataRows.length : 0);
+    } else if (Array.isArray(raw.queryResult)) {
+      const queryResultArr: Record<string, any>[] = raw.queryResult;
+      dataRows = queryResultArr;
+      rowCount = queryResultArr.length;
+    }
+  } else if (Array.isArray(raw.data)) {
+    const dataArr: Record<string, any>[] = raw.data;
+    dataRows = dataArr;
+    rowCount = dataArr.length;
+  } else if (Array.isArray(raw)) {
+    const rawArr: Record<string, any>[] = raw;
+    dataRows = rawArr;
+    rowCount = rawArr.length;
+  }
+
+  return {
+    type: 'query',
+    requiresDatabase: true,
+    confidence: 1.0,
+    question,
+    title: 'Database Query Result',
+    summary: raw.naturalLanguageAnswer || raw.intentExplanation || 'Query executed successfully.',
+    answer: raw.naturalLanguageAnswer || raw.intentExplanation,
+    sql: raw.generatedQuery || raw.sql,
+    data: dataRows,
+    rowCount: rowCount || (dataRows ? dataRows.length : 0),
+  };
+}
+
 export const chatService = {
   /**
-   * Send natural language query to FastAPI query backend endpoint.
-   * Endpoint: POST https://querydata-fastapi-114564247435.us-central1.run.app/ask
-   * Payload: { "prompt": question }
+   * Send natural language query to FastAPI backend endpoint with fallback handling.
+   * Target Endpoint: POST https://querydata-fastapi-114564247435.us-central1.run.app/ask
    */
-  async sendQuery(question: string, _userId: string): Promise<AiQueryResponse> {
-    const response = await axios.post(
-      FASTAPI_ENDPOINT,
-      { prompt: question },
-      { headers: { 'Content-Type': 'application/json' } }
-    );
+  async sendQuery(question: string, userId: string): Promise<AiQueryResponse> {
+    try {
+      // Use local Vite proxy in dev mode to bypass browser CORS OPTIONS 405 block
+      const targetUrl = import.meta.env.DEV ? '/fastapi/ask' : FASTAPI_ENDPOINT;
 
-    const raw = response.data;
+      const response = await axios.post(
+        targetUrl,
+        { prompt: question },
+        { headers: { 'Content-Type': 'application/json' } }
+      );
 
-    // Dynamically transform FastAPI queryResult payload into standardized AiQueryResponse
-    let dataRows: Record<string, any>[] | undefined = undefined;
-    let rowCount = 0;
+      return parseFastApiResponse(response.data, question);
+    } catch (fastApiErr: any) {
+      console.warn(
+        'FastAPI endpoint call failed (network/CORS issue). Attempting direct Cloud Run fallback...',
+        fastApiErr?.message
+      );
 
-    if (raw.queryResult) {
-      if (Array.isArray(raw.queryResult.columns) && Array.isArray(raw.queryResult.rows)) {
-        const colNames = raw.queryResult.columns.map((c: any) =>
-          typeof c === 'object' && c !== null ? c.name : String(c)
+      try {
+        // Direct Cloud Run attempt if proxy failed
+        const directResponse = await axios.post(
+          FASTAPI_ENDPOINT,
+          { prompt: question },
+          { headers: { 'Content-Type': 'application/json' } }
         );
-        dataRows = raw.queryResult.rows.map((r: any) => {
-          const rowObj: Record<string, any> = {};
-          const vals = Array.isArray(r.values)
-            ? r.values.map((v: any) => (v && typeof v === 'object' && 'value' in v ? v.value : v))
-            : [];
-          colNames.forEach((col: string, idx: number) => {
-            rowObj[col] = vals[idx] !== undefined ? vals[idx] : null;
-          });
-          return rowObj;
-        });
-        rowCount = parseInt(raw.queryResult.totalRowCount, 10) || (dataRows ? dataRows.length : 0);
-      } else if (Array.isArray(raw.queryResult)) {
-        const queryResultArr: Record<string, any>[] = raw.queryResult;
-        dataRows = queryResultArr;
-        rowCount = queryResultArr.length;
-      }
-    } else if (Array.isArray(raw.data)) {
-      const dataArr: Record<string, any>[] = raw.data;
-      dataRows = dataArr;
-      rowCount = dataArr.length;
-    } else if (Array.isArray(raw)) {
-      const rawArr: Record<string, any>[] = raw;
-      dataRows = rawArr;
-      rowCount = rawArr.length;
-    }
+        return parseFastApiResponse(directResponse.data, question);
+      } catch (directErr: any) {
+        console.warn(
+          'FastAPI direct call failed. Falling back to Spring Boot AI backend (/api/ai/query)...',
+          directErr?.message
+        );
 
-    return {
-      type: 'query',
-      requiresDatabase: true,
-      confidence: 1.0,
-      question,
-      title: 'Database Query Result',
-      summary: raw.naturalLanguageAnswer || raw.intentExplanation || 'Query executed successfully.',
-      answer: raw.naturalLanguageAnswer || raw.intentExplanation,
-      sql: raw.generatedQuery || raw.sql,
-      data: dataRows,
-      rowCount: rowCount || (dataRows ? dataRows.length : 0),
-    };
+        // Ultimate fallback to local/prod Spring Boot backend
+        const springResponse = await api.post('/api/ai/query', {
+          question,
+          userId,
+        });
+        return springResponse.data;
+      }
+    }
   },
 
   /**

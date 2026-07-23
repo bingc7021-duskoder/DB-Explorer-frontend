@@ -20,6 +20,12 @@ export default defineConfig({
         changeOrigin: true,
         secure: false,
       },
+      '/fastapi': {
+        target: 'https://querydata-fastapi-114564247435.us-central1.run.app',
+        changeOrigin: true,
+        secure: true,
+        rewrite: (path) => path.replace(/^\/fastapi/, ''),
+      },
     },
   },
 });
