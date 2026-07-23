@@ -2,6 +2,8 @@ import axios from 'axios';
 import { ChatMessage, AiQueryResponse, ChatSession } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const FASTAPI_ENDPOINT =
+  import.meta.env.VITE_FASTAPI_URL || 'https://querydata-fastapi-114564247435.us-central1.run.app/ask';
 
 const api = axios.create({
   baseURL: API_BASE_URL,
@@ -12,14 +14,66 @@ const api = axios.create({
 
 export const chatService = {
   /**
-   * Send natural language question to backend AI processing pipeline.
+   * Send natural language query to FastAPI query backend endpoint.
+   * Endpoint: POST https://querydata-fastapi-114564247435.us-central1.run.app/ask
+   * Payload: { "prompt": question }
    */
-  async sendQuery(question: string, userId: string): Promise<AiQueryResponse> {
-    const response = await api.post('/api/ai/query', {
+  async sendQuery(question: string, _userId: string): Promise<AiQueryResponse> {
+    const response = await axios.post(
+      FASTAPI_ENDPOINT,
+      { prompt: question },
+      { headers: { 'Content-Type': 'application/json' } }
+    );
+
+    const raw = response.data;
+
+    // Dynamically transform FastAPI queryResult payload into standardized AiQueryResponse
+    let dataRows: Record<string, any>[] | undefined = undefined;
+    let rowCount = 0;
+
+    if (raw.queryResult) {
+      if (Array.isArray(raw.queryResult.columns) && Array.isArray(raw.queryResult.rows)) {
+        const colNames = raw.queryResult.columns.map((c: any) =>
+          typeof c === 'object' && c !== null ? c.name : String(c)
+        );
+        dataRows = raw.queryResult.rows.map((r: any) => {
+          const rowObj: Record<string, any> = {};
+          const vals = Array.isArray(r.values)
+            ? r.values.map((v: any) => (v && typeof v === 'object' && 'value' in v ? v.value : v))
+            : [];
+          colNames.forEach((col: string, idx: number) => {
+            rowObj[col] = vals[idx] !== undefined ? vals[idx] : null;
+          });
+          return rowObj;
+        });
+        rowCount = parseInt(raw.queryResult.totalRowCount, 10) || (dataRows ? dataRows.length : 0);
+      } else if (Array.isArray(raw.queryResult)) {
+        const queryResultArr: Record<string, any>[] = raw.queryResult;
+        dataRows = queryResultArr;
+        rowCount = queryResultArr.length;
+      }
+    } else if (Array.isArray(raw.data)) {
+      const dataArr: Record<string, any>[] = raw.data;
+      dataRows = dataArr;
+      rowCount = dataArr.length;
+    } else if (Array.isArray(raw)) {
+      const rawArr: Record<string, any>[] = raw;
+      dataRows = rawArr;
+      rowCount = rawArr.length;
+    }
+
+    return {
+      type: 'query',
+      requiresDatabase: true,
+      confidence: 1.0,
       question,
-      userId,
-    });
-    return response.data;
+      title: 'Database Query Result',
+      summary: raw.naturalLanguageAnswer || raw.intentExplanation || 'Query executed successfully.',
+      answer: raw.naturalLanguageAnswer || raw.intentExplanation,
+      sql: raw.generatedQuery || raw.sql,
+      data: dataRows,
+      rowCount: rowCount || (dataRows ? dataRows.length : 0),
+    };
   },
 
   /**
@@ -60,7 +114,6 @@ export const chatService = {
 
   /**
    * Save chat message under a ChatSession to persistent backend storage.
-   * Returns saved response containing updated session title (if AI title was generated).
    */
   async saveChatMessage(
     userId: string,
