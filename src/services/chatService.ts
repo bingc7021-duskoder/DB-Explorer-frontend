@@ -12,6 +12,23 @@ const api = axios.create({
   },
 });
 
+// Helper function to detect Query Execution Error indicators
+function isQueryExecutionError(raw: any): boolean {
+  if (!raw) return false;
+  if (raw.isExecutionError === true || raw.queryExecutionError || raw.executionError) return true;
+
+  const candidateStrings = [
+    typeof raw === 'string' ? raw : '',
+    typeof raw.error === 'string' ? raw.error : '',
+    typeof raw.message === 'string' ? raw.message : '',
+    typeof raw.detail === 'string' ? raw.detail : '',
+    typeof raw.status === 'string' ? raw.status : '',
+  ];
+
+  const errorRegex = /query[\s_-]*execution[\s_-]*error/i;
+  return candidateStrings.some((str) => errorRegex.test(str));
+}
+
 // Helper function to parse FastAPI response payload into standardized AiQueryResponse
 function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
   // PRIORITY CHECK 1: Disambiguation Question Detection
@@ -44,6 +61,21 @@ function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
         };
       }
     } catch (e) {}
+  }
+
+  // PRIORITY CHECK 2: Query Execution Error / Unsupported Operation Detection
+  if (isQueryExecutionError(raw)) {
+    return {
+      type: 'unsupported',
+      requiresDatabase: false,
+      confidence: 1.0,
+      question,
+      title: 'Operation Not Available',
+      summary: 'This operation is currently not supported. Please try a different request or ask a business analysis-related question.',
+      answer: 'This operation is currently not supported. Please try a different request or ask a business analysis-related question.',
+      isExecutionError: true,
+      error: 'Query Execution Error',
+    };
   }
 
   // Normal Response Data Extraction
@@ -135,7 +167,7 @@ export const chatService = {
           userId,
         });
 
-        // Check if Spring Boot payload contains disambiguationQuestion
+        // Priority 1 Check: disambiguationQuestion
         if (springResponse.data && springResponse.data.disambiguationQuestion) {
           return {
             type: 'disambiguation',
@@ -146,6 +178,21 @@ export const chatService = {
             summary: 'Please rephrase your query with a business or analytics focus.',
             answer: String(springResponse.data.disambiguationQuestion),
             disambiguationQuestion: String(springResponse.data.disambiguationQuestion),
+          };
+        }
+
+        // Priority 2 Check: Query Execution Error
+        if (isQueryExecutionError(springResponse.data)) {
+          return {
+            type: 'unsupported',
+            requiresDatabase: false,
+            confidence: 1.0,
+            question,
+            title: 'Operation Not Available',
+            summary: 'This operation is currently not supported. Please try a different request or ask a business analysis-related question.',
+            answer: 'This operation is currently not supported. Please try a different request or ask a business analysis-related question.',
+            isExecutionError: true,
+            error: 'Query Execution Error',
           };
         }
 

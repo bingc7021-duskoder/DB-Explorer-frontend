@@ -155,6 +155,12 @@ export const useChat = (userId: string = 'user-1') => {
     try {
       const response = await chatService.sendQuery(trimmed, userId);
 
+      const isExecError = Boolean(
+        response.isExecutionError ||
+          response.type === 'unsupported' ||
+          (response.error && /query[\s_-]*execution[\s_-]*error/i.test(response.error))
+      );
+
       // 3. Instantly append Assistant Message to UI
       const assistantMsg: ChatMessage = {
         id: `assistant-${Date.now()}`,
@@ -162,20 +168,27 @@ export const useChat = (userId: string = 'user-1') => {
         sender: 'assistant',
         type:
           response.type ||
-          (response.disambiguationQuestion ? 'disambiguation' : response.sql ? 'query' : 'text'),
+          (response.disambiguationQuestion
+            ? 'disambiguation'
+            : isExecError
+            ? 'unsupported'
+            : response.sql
+            ? 'query'
+            : 'text'),
         messageText: response.answer || response.summary || 'Query processed.',
-        title: response.title,
+        title: isExecError ? 'Operation Not Available' : response.title,
         summary: response.summary,
         answer: response.answer,
         disambiguationQuestion: response.disambiguationQuestion,
+        isExecutionError: isExecError,
         highlights: response.highlights,
-        sql: response.sql,
-        data: response.data,
+        sql: isExecError ? undefined : response.sql,
+        data: isExecError ? undefined : response.data,
         rowCount: response.rowCount,
         executionTimeMs: response.executionTimeMs,
         suggestedFollowupQuestions: response.suggestedFollowupQuestions,
         visualizationHint: response.visualizationHint,
-        error: response.error,
+        error: isExecError ? undefined : response.error,
         createdAt: new Date().toISOString(),
       };
 

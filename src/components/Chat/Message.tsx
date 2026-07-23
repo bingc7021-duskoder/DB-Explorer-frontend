@@ -15,6 +15,7 @@ import {
   RotateCcw,
   FileText,
   Info,
+  AlertCircle,
 } from 'lucide-react';
 
 interface MessageProps {
@@ -41,7 +42,6 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
     if (message.type === 'disambiguation') return true;
     if (message.disambiguationQuestion && message.disambiguationQuestion.trim().length > 0) return true;
 
-    // Check messageText or raw JSON payload
     if (message.messageText && typeof message.messageText === 'string') {
       if (message.messageText.includes('disambiguationQuestion')) {
         try {
@@ -53,16 +53,31 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
     return false;
   }, [message.type, message.disambiguationQuestion, message.messageText]);
 
+  // PRIORITY CHECK 2: Detect if message is a Query Execution Error / Unsupported Operation
+  const isExecutionError = useMemo<boolean>(() => {
+    if (isDisambiguation) return false;
+    if (message.isExecutionError) return true;
+    if (message.type === 'unsupported') return true;
+
+    const candidateStrings = [
+      message.error || '',
+      message.messageText || '',
+      message.summary || '',
+      message.answer || '',
+    ];
+
+    const errorRegex = /query[\s_-]*execution[\s_-]*error/i;
+    return candidateStrings.some((str) => errorRegex.test(str));
+  }, [isDisambiguation, message.isExecutionError, message.type, message.error, message.messageText, message.summary, message.answer]);
+
   // Dynamic tabular data extraction for standard response
   const tabularData = useMemo<Record<string, any>[] | null>(() => {
-    if (isDisambiguation) return null; // Do NOT render tables for disambiguation
+    if (isDisambiguation || isExecutionError) return null; // Do NOT render tables for special cards
 
-    // 1. Direct message.data array
     if (Array.isArray(message.data) && message.data.length > 0) {
       return message.data;
     }
 
-    // 2. Try parsing messageText if it is a JSON payload
     if (message.messageText && typeof message.messageText === 'string') {
       const trimmed = message.messageText.trim();
       if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
@@ -80,11 +95,11 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
     }
 
     return null;
-  }, [isDisambiguation, message.data, message.messageText]);
+  }, [isDisambiguation, isExecutionError, message.data, message.messageText]);
 
   // Extract concise Executive Summary string for Section A
   const summaryText = useMemo<string>(() => {
-    if (isDisambiguation) return '';
+    if (isDisambiguation || isExecutionError) return '';
 
     if (message.summary && message.summary.trim()) {
       return message.summary.trim();
@@ -99,7 +114,7 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
     }
 
     return message.title ? `${message.title} query output processed successfully.` : 'Query execution completed.';
-  }, [isDisambiguation, message.summary, message.answer, message.messageText, message.title]);
+  }, [isDisambiguation, isExecutionError, message.summary, message.answer, message.messageText, message.title]);
 
   return (
     <div className={`flex gap-3.5 ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in`}>
@@ -118,7 +133,6 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
         ) : isDisambiguation ? (
           /* PRIORITY 1: Disambiguation Response Card */
           <div className="glass-panel p-4.5 rounded-2xl border border-sky-500/30 bg-sky-950/20 text-xs leading-relaxed space-y-3.5 shadow-xl max-w-xl">
-            {/* Assistant Header */}
             <div className="flex items-center gap-2 border-b border-sky-500/20 pb-2.5">
               <div className="p-1.5 bg-sky-500/15 border border-sky-500/30 rounded-xl text-sky-400">
                 <Info className="w-4 h-4" />
@@ -126,16 +140,34 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
               <h3 className="font-bold text-white text-sm tracking-tight">Business Analysis Assistant</h3>
             </div>
 
-            {/* Informational Message Alert Card */}
             <div className="p-3.5 bg-sky-500/10 border-l-4 border-sky-400 rounded-r-2xl text-slate-100 text-xs leading-relaxed shadow-sm">
               <p className="font-medium text-slate-100 leading-normal">
                 I specialize in answering Business Analyst and business intelligence related questions. Please ask a question related to business analysis, data analysis, reporting, KPIs, dashboards, requirements, workflows, or similar business topics.
               </p>
             </div>
 
-            {/* Subtitle Rephrase Prompt */}
             <p className="text-[11px] italic text-sky-300/80 font-sans pt-0.5">
               Please rephrase your query with a business or analytics focus.
+            </p>
+          </div>
+        ) : isExecutionError ? (
+          /* PRIORITY 2: Query Execution Error / Unsupported Operation Card */
+          <div className="glass-panel p-4.5 rounded-2xl border border-amber-500/30 bg-amber-950/20 text-xs leading-relaxed space-y-3.5 shadow-xl max-w-xl">
+            <div className="flex items-center gap-2 border-b border-amber-500/20 pb-2.5">
+              <div className="p-1.5 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-400">
+                <AlertCircle className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-white text-sm tracking-tight">Operation Not Available</h3>
+            </div>
+
+            <div className="p-3.5 bg-amber-500/10 border-l-4 border-amber-400 rounded-r-2xl text-slate-100 text-xs leading-relaxed shadow-sm">
+              <p className="font-medium text-slate-100 leading-normal">
+                This operation is currently not supported. Please try a different request or ask a business analysis-related question.
+              </p>
+            </div>
+
+            <p className="text-[11px] italic text-amber-300/80 font-sans pt-0.5">
+              Some actions, such as creating tickets, sending Slack messages, or updating external systems, are not available at this time.
             </p>
           </div>
         ) : (
