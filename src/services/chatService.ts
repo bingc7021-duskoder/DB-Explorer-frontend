@@ -40,10 +40,21 @@ function isQueryExecutionError(raw: any): boolean {
   return candidateStrings.some((str) => errorRegex.test(str));
 }
 
-// Helper function to parse FastAPI response payload into standardized AiQueryResponse
-function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
+// Helper function to parse AI backend response payload into standardized AiQueryResponse
+function parseApiResponse(raw: any, question: string): AiQueryResponse {
+  if (!raw) {
+    return {
+      type: 'text',
+      requiresDatabase: false,
+      confidence: 0,
+      question,
+      title: 'Query Result',
+      summary: 'No response data received from backend.',
+    };
+  }
+
   // PRIORITY CHECK 1: Disambiguation Question Detection
-  if (raw && typeof raw === 'object' && raw.disambiguationQuestion) {
+  if (typeof raw === 'object' && raw.disambiguationQuestion) {
     return {
       type: 'disambiguation',
       requiresDatabase: false,
@@ -98,11 +109,14 @@ function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
     };
   }
 
-  // Normal Response Data Extraction
+  // PRIORITY CHECK 3: Normal Response Data & Table Extraction
   let dataRows: Record<string, any>[] | undefined = undefined;
-  let rowCount = 0;
+  let rowCount = raw.rowCount || 0;
 
-  if (raw.queryResult) {
+  if (Array.isArray(raw.data)) {
+    dataRows = raw.data;
+    rowCount = raw.rowCount || dataRows?.length || 0;
+  } else if (raw.queryResult) {
     if (Array.isArray(raw.queryResult.columns) && Array.isArray(raw.queryResult.rows)) {
       const colNames = raw.queryResult.columns.map((c: any) =>
         typeof c === 'object' && c !== null ? c.name : String(c)
@@ -123,10 +137,6 @@ function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
       dataRows = queryResultArr;
       rowCount = queryResultArr.length;
     }
-  } else if (Array.isArray(raw.data)) {
-    const dataArr: Record<string, any>[] = raw.data;
-    dataRows = dataArr;
-    rowCount = dataArr.length;
   } else if (Array.isArray(raw)) {
     const rawArr: Record<string, any>[] = raw;
     dataRows = rawArr;
@@ -134,96 +144,55 @@ function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
   }
 
   return {
-    type: 'query',
-    requiresDatabase: true,
-    confidence: 1.0,
+    type: raw.type || 'query',
+    requiresDatabase: raw.requiresDatabase !== undefined ? raw.requiresDatabase : true,
+    confidence: raw.confidence || 1.0,
     question,
-    title: 'Database Query Result',
-    summary: raw.naturalLanguageAnswer || raw.intentExplanation || 'Query executed successfully.',
-    answer: raw.naturalLanguageAnswer || raw.intentExplanation,
-    sql: raw.generatedQuery || raw.sql,
+    title: raw.title || 'Database Query Result',
+    summary: raw.summary || raw.naturalLanguageAnswer || raw.intentExplanation || 'Query executed successfully.',
+    answer: raw.answer || raw.naturalLanguageAnswer || raw.intentExplanation,
+    highlights: raw.highlights,
+    sql: raw.sql || raw.generatedQuery,
     data: dataRows,
     rowCount: rowCount || (dataRows ? dataRows.length : 0),
+    executionTimeMs: raw.executionTimeMs,
+    suggestedFollowupQuestions: raw.suggestedFollowupQuestions,
+    visualizationHint: raw.visualizationHint,
+    error: raw.error,
   };
 }
 
 export const chatService = {
   /**
-   * Send natural language query to FastAPI backend endpoint with fallback handling.
-   * Target Endpoint: POST https://querydata-fastapi-114564247435.us-central1.run.app/ask
+   * Send natural language query to primary backend endpoint (http://localhost:8080/api/ai/query).
    */
   async sendQuery(question: string, userId: string): Promise<AiQueryResponse> {
     try {
-      const targetUrl = import.meta.env.DEV ? '/fastapi/ask' : FASTAPI_ENDPOINT;
+      // Primary Backend Endpoint Call: Spring Boot /api/ai/query (http://localhost:8080)
+      const response = await api.post('/api/ai/query', {
+        question,
+        userId,
+      });
 
-      const response = await axios.post(
-        targetUrl,
-        { prompt: question },
-        { headers: { 'Content-Type': 'application/json' } }
-      );
-
-      return parseFastApiResponse(response.data, question);
-    } catch (fastApiErr: any) {
+      return parseApiResponse(response.data, question);
+    } catch (primaryErr: any) {
       console.warn(
-        'FastAPI endpoint call failed (network/CORS issue). Attempting direct Cloud Run fallback...',
-        fastApiErr?.message
+        'Primary Spring Boot backend (/api/ai/query) call failed, attempting FastAPI fallback:',
+        primaryErr?.message
       );
 
       try {
-        const directResponse = await axios.post(
-          FASTAPI_ENDPOINT,
+        const targetUrl = import.meta.env.DEV ? '/fastapi/ask' : FASTAPI_ENDPOINT;
+        const fallbackResponse = await axios.post(
+          targetUrl,
           { prompt: question },
           { headers: { 'Content-Type': 'application/json' } }
         );
-        return parseFastApiResponse(directResponse.data, question);
-      } catch (directErr: any) {
-        console.warn(
-          'FastAPI direct call failed. Falling back to Spring Boot AI backend (/api/ai/query)...',
-          directErr?.message
-        );
 
-        const springResponse = await api.post('/api/ai/query', {
-          question,
-          userId,
-        });
-
-        // Priority 1 Check: disambiguationQuestion
-        if (springResponse.data && springResponse.data.disambiguationQuestion) {
-          return {
-            type: 'disambiguation',
-            requiresDatabase: false,
-            confidence: 1.0,
-            question,
-            title: 'Business Analysis Assistant',
-            summary: 'Please rephrase your query with a business or analytics focus.',
-            answer: String(springResponse.data.disambiguationQuestion),
-            disambiguationQuestion: String(springResponse.data.disambiguationQuestion),
-          };
-        }
-
-        // Priority 2 Check: queryResult.queryExecutionError
-        if (isQueryExecutionError(springResponse.data)) {
-          return {
-            type: 'unsupported',
-            requiresDatabase: false,
-            confidence: 1.0,
-            question,
-            title: 'Operation Not Supported',
-            summary:
-              'This operation is currently not supported. Please submit a read-only business analysis query or another supported request.',
-            answer:
-              'This operation is currently not supported. Please submit a read-only business analysis query or another supported request.',
-            isExecutionError: true,
-            queryExecutionError: String(
-              springResponse.data?.queryResult?.queryExecutionError ||
-                springResponse.data?.queryExecutionError ||
-                'Query Execution Error'
-            ),
-            error: 'Query Execution Error',
-          };
-        }
-
-        return springResponse.data;
+        return parseApiResponse(fallbackResponse.data, question);
+      } catch (fallbackErr: any) {
+        console.error('All AI backend endpoints failed:', fallbackErr?.message);
+        throw primaryErr;
       }
     }
   },
