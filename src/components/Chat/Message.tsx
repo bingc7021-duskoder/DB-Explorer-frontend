@@ -53,10 +53,11 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
     return false;
   }, [message.type, message.disambiguationQuestion, message.messageText]);
 
-  // PRIORITY CHECK 2: Detect if message is a Query Execution Error / Unsupported Operation
+  // PRIORITY CHECK 2: Detect queryResult.queryExecutionError or Unsupported Operation
   const isExecutionError = useMemo<boolean>(() => {
     if (isDisambiguation) return false;
     if (message.isExecutionError) return true;
+    if (message.queryExecutionError && message.queryExecutionError.trim().length > 0) return true;
     if (message.type === 'unsupported') return true;
 
     const candidateStrings = [
@@ -68,7 +69,16 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
 
     const errorRegex = /query[\s_-]*execution[\s_-]*error/i;
     return candidateStrings.some((str) => errorRegex.test(str));
-  }, [isDisambiguation, message.isExecutionError, message.type, message.error, message.messageText, message.summary, message.answer]);
+  }, [
+    isDisambiguation,
+    message.isExecutionError,
+    message.queryExecutionError,
+    message.type,
+    message.error,
+    message.messageText,
+    message.summary,
+    message.answer,
+  ]);
 
   // Dynamic tabular data extraction for standard response
   const tabularData = useMemo<Record<string, any>[] | null>(() => {
@@ -157,17 +167,17 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
               <div className="p-1.5 bg-amber-500/15 border border-amber-500/30 rounded-xl text-amber-400">
                 <AlertCircle className="w-4 h-4" />
               </div>
-              <h3 className="font-bold text-white text-sm tracking-tight">Operation Not Available</h3>
+              <h3 className="font-bold text-white text-sm tracking-tight">Operation Not Supported</h3>
             </div>
 
             <div className="p-3.5 bg-amber-500/10 border-l-4 border-amber-400 rounded-r-2xl text-slate-100 text-xs leading-relaxed shadow-sm">
               <p className="font-medium text-slate-100 leading-normal">
-                This operation is currently not supported. Please try a different request or ask a business analysis-related question.
+                This operation is currently not supported. Please submit a read-only business analysis query or another supported request.
               </p>
             </div>
 
             <p className="text-[11px] italic text-amber-300/80 font-sans pt-0.5">
-              Some actions, such as creating tickets, sending Slack messages, or updating external systems, are not available at this time.
+              Operations that modify data (such as INSERT, UPDATE, DELETE, DROP, or CREATE) are not supported by this application.
             </p>
           </div>
         ) : (

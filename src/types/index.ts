@@ -54,6 +54,7 @@ export interface ChatMessage {
   answer?: string;
   disambiguationQuestion?: string;
   isExecutionError?: boolean;
+  queryExecutionError?: string;
   highlights?: string[];
   sql?: string;
   data?: Record<string, any>[];
@@ -84,6 +85,7 @@ export interface AiQueryResponse {
   answer?: string;
   disambiguationQuestion?: string;
   isExecutionError?: boolean;
+  queryExecutionError?: string;
   highlights?: string[];
   relatedObjects?: any;
   resultSummary?: any;

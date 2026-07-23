@@ -12,17 +12,28 @@ const api = axios.create({
   },
 });
 
-// Helper function to detect Query Execution Error indicators
+// Helper function to detect queryResult.queryExecutionError indicators
 function isQueryExecutionError(raw: any): boolean {
-  if (!raw) return false;
-  if (raw.isExecutionError === true || raw.queryExecutionError || raw.executionError) return true;
+  if (!raw || typeof raw !== 'object') return false;
+
+  // PRIORITY CHECK 2 MANDATORY PATH: queryResult.queryExecutionError
+  if (
+    raw.queryResult &&
+    typeof raw.queryResult === 'object' &&
+    raw.queryResult.queryExecutionError &&
+    String(raw.queryResult.queryExecutionError).trim().length > 0
+  ) {
+    return true;
+  }
+
+  // Additional Execution Error checks
+  if (raw.isExecutionError === true) return true;
+  if (raw.queryExecutionError && String(raw.queryExecutionError).trim().length > 0) return true;
 
   const candidateStrings = [
-    typeof raw === 'string' ? raw : '',
     typeof raw.error === 'string' ? raw.error : '',
     typeof raw.message === 'string' ? raw.message : '',
     typeof raw.detail === 'string' ? raw.detail : '',
-    typeof raw.status === 'string' ? raw.status : '',
   ];
 
   const errorRegex = /query[\s_-]*execution[\s_-]*error/i;
@@ -63,18 +74,27 @@ function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
     } catch (e) {}
   }
 
-  // PRIORITY CHECK 2: Query Execution Error / Unsupported Operation Detection
+  // PRIORITY CHECK 2: queryResult.queryExecutionError Detection
   if (isQueryExecutionError(raw)) {
+    const errorMsg =
+      (raw.queryResult && raw.queryResult.queryExecutionError) ||
+      raw.queryExecutionError ||
+      raw.error ||
+      'Query Execution Error';
+
     return {
       type: 'unsupported',
       requiresDatabase: false,
       confidence: 1.0,
       question,
-      title: 'Operation Not Available',
-      summary: 'This operation is currently not supported. Please try a different request or ask a business analysis-related question.',
-      answer: 'This operation is currently not supported. Please try a different request or ask a business analysis-related question.',
+      title: 'Operation Not Supported',
+      summary:
+        'This operation is currently not supported. Please submit a read-only business analysis query or another supported request.',
+      answer:
+        'This operation is currently not supported. Please submit a read-only business analysis query or another supported request.',
       isExecutionError: true,
-      error: 'Query Execution Error',
+      queryExecutionError: String(errorMsg),
+      error: String(errorMsg),
     };
   }
 
@@ -181,17 +201,24 @@ export const chatService = {
           };
         }
 
-        // Priority 2 Check: Query Execution Error
+        // Priority 2 Check: queryResult.queryExecutionError
         if (isQueryExecutionError(springResponse.data)) {
           return {
             type: 'unsupported',
             requiresDatabase: false,
             confidence: 1.0,
             question,
-            title: 'Operation Not Available',
-            summary: 'This operation is currently not supported. Please try a different request or ask a business analysis-related question.',
-            answer: 'This operation is currently not supported. Please try a different request or ask a business analysis-related question.',
+            title: 'Operation Not Supported',
+            summary:
+              'This operation is currently not supported. Please submit a read-only business analysis query or another supported request.',
+            answer:
+              'This operation is currently not supported. Please submit a read-only business analysis query or another supported request.',
             isExecutionError: true,
+            queryExecutionError: String(
+              springResponse.data?.queryResult?.queryExecutionError ||
+                springResponse.data?.queryExecutionError ||
+                'Query Execution Error'
+            ),
             error: 'Query Execution Error',
           };
         }
