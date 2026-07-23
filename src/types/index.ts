@@ -47,11 +47,12 @@ export interface ChatMessage {
   sessionId?: string;
   userId?: string;
   sender: 'user' | 'assistant';
-  type?: 'text' | 'query' | 'error';
+  type?: 'text' | 'query' | 'error' | 'disambiguation';
   messageText: string;
   title?: string;
   summary?: string;
   answer?: string;
+  disambiguationQuestion?: string;
   highlights?: string[];
   sql?: string;
   data?: Record<string, any>[];
@@ -73,13 +74,14 @@ export interface ChatSession {
 }
 
 export interface AiQueryResponse {
-  type: 'text' | 'query';
+  type: 'text' | 'query' | 'disambiguation';
   requiresDatabase: boolean;
   confidence: number;
   question: string;
   title?: string;
   summary?: string;
   answer?: string;
+  disambiguationQuestion?: string;
   highlights?: string[];
   relatedObjects?: any;
   resultSummary?: any;

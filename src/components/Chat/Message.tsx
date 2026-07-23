@@ -14,6 +14,7 @@ import {
   AlertTriangle,
   RotateCcw,
   FileText,
+  Info,
 } from 'lucide-react';
 
 interface MessageProps {
@@ -35,8 +36,27 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
     setTimeout(() => setCopiedSql(false), 2000);
   };
 
-  // Helper to dynamically extract tabular data array from message object or parsed JSON string
+  // PRIORITY CHECK 1: Detect if message is a Disambiguation Question response
+  const isDisambiguation = useMemo<boolean>(() => {
+    if (message.type === 'disambiguation') return true;
+    if (message.disambiguationQuestion && message.disambiguationQuestion.trim().length > 0) return true;
+
+    // Check messageText or raw JSON payload
+    if (message.messageText && typeof message.messageText === 'string') {
+      if (message.messageText.includes('disambiguationQuestion')) {
+        try {
+          const parsed = JSON.parse(message.messageText);
+          if (parsed.disambiguationQuestion) return true;
+        } catch (e) {}
+      }
+    }
+    return false;
+  }, [message.type, message.disambiguationQuestion, message.messageText]);
+
+  // Dynamic tabular data extraction for standard response
   const tabularData = useMemo<Record<string, any>[] | null>(() => {
+    if (isDisambiguation) return null; // Do NOT render tables for disambiguation
+
     // 1. Direct message.data array
     if (Array.isArray(message.data) && message.data.length > 0) {
       return message.data;
@@ -50,28 +70,26 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
           const parsed = JSON.parse(trimmed);
           if (Array.isArray(parsed)) return parsed;
 
-          // Check common keys in response object
           const possibleArray =
             parsed.data || parsed.records || parsed.results || parsed.rows || parsed.items || parsed.customers;
           if (Array.isArray(possibleArray) && possibleArray.length > 0) {
             return possibleArray;
           }
-        } catch (e) {
-          // Not valid JSON string, ignore
-        }
+        } catch (e) {}
       }
     }
 
     return null;
-  }, [message.data, message.messageText]);
+  }, [isDisambiguation, message.data, message.messageText]);
 
   // Extract concise Executive Summary string for Section A
   const summaryText = useMemo<string>(() => {
+    if (isDisambiguation) return '';
+
     if (message.summary && message.summary.trim()) {
       return message.summary.trim();
     }
 
-    // If answer/messageText exists and isn't raw JSON, use it as summary
     if (message.answer && message.answer.trim()) {
       return message.answer.trim();
     }
@@ -81,7 +99,7 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
     }
 
     return message.title ? `${message.title} query output processed successfully.` : 'Query execution completed.';
-  }, [message.summary, message.answer, message.messageText, message.title]);
+  }, [isDisambiguation, message.summary, message.answer, message.messageText, message.title]);
 
   return (
     <div className={`flex gap-3.5 ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in`}>
@@ -97,8 +115,31 @@ export const Message: React.FC<MessageProps> = ({ message, onRetry, lastUserQuer
           <div className="p-3.5 rounded-2xl bg-brand-600 text-white shadow-lg text-xs leading-relaxed font-medium">
             {message.messageText}
           </div>
+        ) : isDisambiguation ? (
+          /* PRIORITY 1: Disambiguation Response Card */
+          <div className="glass-panel p-4.5 rounded-2xl border border-sky-500/30 bg-sky-950/20 text-xs leading-relaxed space-y-3.5 shadow-xl max-w-xl">
+            {/* Assistant Header */}
+            <div className="flex items-center gap-2 border-b border-sky-500/20 pb-2.5">
+              <div className="p-1.5 bg-sky-500/15 border border-sky-500/30 rounded-xl text-sky-400">
+                <Info className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-white text-sm tracking-tight">Business Analysis Assistant</h3>
+            </div>
+
+            {/* Informational Message Alert Card */}
+            <div className="p-3.5 bg-sky-500/10 border-l-4 border-sky-400 rounded-r-2xl text-slate-100 text-xs leading-relaxed shadow-sm">
+              <p className="font-medium text-slate-100 leading-normal">
+                I specialize in answering Business Analyst and business intelligence related questions. Please ask a question related to business analysis, data analysis, reporting, KPIs, dashboards, requirements, workflows, or similar business topics.
+              </p>
+            </div>
+
+            {/* Subtitle Rephrase Prompt */}
+            <p className="text-[11px] italic text-sky-300/80 font-sans pt-0.5">
+              Please rephrase your query with a business or analytics focus.
+            </p>
+          </div>
         ) : (
-          /* Assistant Response Container Card */
+          /* Standard Assistant Response Container Card */
           <div className="glass-panel p-4 rounded-2xl border border-slate-800 text-xs leading-relaxed space-y-3.5 bg-slate-900/90 shadow-xl">
             {/* Title Header */}
             {message.title && (

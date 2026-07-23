@@ -14,6 +14,39 @@ const api = axios.create({
 
 // Helper function to parse FastAPI response payload into standardized AiQueryResponse
 function parseFastApiResponse(raw: any, question: string): AiQueryResponse {
+  // PRIORITY CHECK 1: Disambiguation Question Detection
+  if (raw && typeof raw === 'object' && raw.disambiguationQuestion) {
+    return {
+      type: 'disambiguation',
+      requiresDatabase: false,
+      confidence: 1.0,
+      question,
+      title: 'Business Analysis Assistant',
+      summary: 'Please rephrase your query with a business or analytics focus.',
+      answer: String(raw.disambiguationQuestion),
+      disambiguationQuestion: String(raw.disambiguationQuestion),
+    };
+  }
+
+  if (typeof raw === 'string' && raw.includes('disambiguationQuestion')) {
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed.disambiguationQuestion) {
+        return {
+          type: 'disambiguation',
+          requiresDatabase: false,
+          confidence: 1.0,
+          question,
+          title: 'Business Analysis Assistant',
+          summary: 'Please rephrase your query with a business or analytics focus.',
+          answer: String(parsed.disambiguationQuestion),
+          disambiguationQuestion: String(parsed.disambiguationQuestion),
+        };
+      }
+    } catch (e) {}
+  }
+
+  // Normal Response Data Extraction
   let dataRows: Record<string, any>[] | undefined = undefined;
   let rowCount = 0;
 
@@ -69,7 +102,6 @@ export const chatService = {
    */
   async sendQuery(question: string, userId: string): Promise<AiQueryResponse> {
     try {
-      // Use local Vite proxy in dev mode to bypass browser CORS OPTIONS 405 block
       const targetUrl = import.meta.env.DEV ? '/fastapi/ask' : FASTAPI_ENDPOINT;
 
       const response = await axios.post(
@@ -86,7 +118,6 @@ export const chatService = {
       );
 
       try {
-        // Direct Cloud Run attempt if proxy failed
         const directResponse = await axios.post(
           FASTAPI_ENDPOINT,
           { prompt: question },
@@ -99,11 +130,25 @@ export const chatService = {
           directErr?.message
         );
 
-        // Ultimate fallback to local/prod Spring Boot backend
         const springResponse = await api.post('/api/ai/query', {
           question,
           userId,
         });
+
+        // Check if Spring Boot payload contains disambiguationQuestion
+        if (springResponse.data && springResponse.data.disambiguationQuestion) {
+          return {
+            type: 'disambiguation',
+            requiresDatabase: false,
+            confidence: 1.0,
+            question,
+            title: 'Business Analysis Assistant',
+            summary: 'Please rephrase your query with a business or analytics focus.',
+            answer: String(springResponse.data.disambiguationQuestion),
+            disambiguationQuestion: String(springResponse.data.disambiguationQuestion),
+          };
+        }
+
         return springResponse.data;
       }
     }

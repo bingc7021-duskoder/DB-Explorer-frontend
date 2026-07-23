@@ -160,11 +160,14 @@ export const useChat = (userId: string = 'user-1') => {
         id: `assistant-${Date.now()}`,
         sessionId: currentSessionId,
         sender: 'assistant',
-        type: response.type || (response.sql ? 'query' : 'text'),
+        type:
+          response.type ||
+          (response.disambiguationQuestion ? 'disambiguation' : response.sql ? 'query' : 'text'),
         messageText: response.answer || response.summary || 'Query processed.',
         title: response.title,
         summary: response.summary,
         answer: response.answer,
+        disambiguationQuestion: response.disambiguationQuestion,
         highlights: response.highlights,
         sql: response.sql,
         data: response.data,
