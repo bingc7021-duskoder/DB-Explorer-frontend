@@ -44,12 +44,22 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
     'What tables exist in the database?',
     'Show relationships for customer table',
     'Which tables contain foreign keys?',
-    'List all customer accounts with high balances',
+    'List all customer accounts with high risk scores',
   ];
+
+  // Helper to retrieve the last user question prior to an error/assistant message
+  const getLastUserQuery = (msgIndex: number): string | undefined => {
+    for (let i = msgIndex - 1; i >= 0; i--) {
+      if (messages[i].sender === 'user') {
+        return messages[i].messageText;
+      }
+    }
+    return undefined;
+  };
 
   return (
     <div className="w-full h-full flex flex-col bg-slate-950 text-slate-100 overflow-hidden relative">
-      {/* Clean Minimal Top Header Bar (No Robot Icon) */}
+      {/* Clean Minimal Top Header Bar */}
       <div className="h-14 border-b border-slate-800 bg-slate-900/80 backdrop-blur-md px-4 flex items-center justify-between shrink-0 z-10">
         {/* Left Header Title & Status */}
         <div className="flex items-center gap-2.5 min-w-0">
@@ -64,7 +74,7 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
           </div>
         </div>
 
-        {/* Right Header Navigation: Prominent Chat History Button */}
+        {/* Right Header Navigation: Chat History Button */}
         <div className="flex items-center gap-2 shrink-0">
           <button
             onClick={() => setHistoryOpen(!historyOpen)}
@@ -112,7 +122,14 @@ export const ChatWindow: React.FC<ChatWindowProps> = ({
               </div>
             </div>
           ) : (
-            messages.map((msg) => <Message key={msg.id} message={msg} />)
+            messages.map((msg, idx) => (
+              <Message
+                key={msg.id}
+                message={msg}
+                onRetry={onSendMessage}
+                lastUserQuery={getLastUserQuery(idx)}
+              />
+            ))
           )}
 
           {isLoading && (
